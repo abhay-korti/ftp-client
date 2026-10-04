@@ -9,6 +9,7 @@
 
 int sendMessageStatus(int sockfd) {
   char buf[BUFFER_SIZE];
+  memset(buf, 0, BUFFER_SIZE);
   ssize_t bufferBytesUsed = 0;
 
   while (1) {
@@ -19,11 +20,10 @@ int sendMessageStatus(int sockfd) {
       close(sockfd);
       return -1;
     }
-    ssize_t n =
-        recv(sockfd, buf + bufferBytesUsed, sizeof(buf) - bufferBytesUsed, 0);
-    // std::cout << buf << "\n";
+    ssize_t n = recv(sockfd, buf + bufferBytesUsed,
+                     sizeof(buf) - bufferBytesUsed - 1, 0);
     if (n < 0) {
-      std::cerr << "Recv Error: Error Receving Data\n";
+      std::cerr << "Recv Error: Error Receiving Data\n";
       close(sockfd);
       return -1;
     }
@@ -34,7 +34,11 @@ int sendMessageStatus(int sockfd) {
   buf[bufferBytesUsed] = '\0';
 
   std::cout << "Bytes Recevied:\n" << buf << "\n";
-  return 1;
+
+  if (buf[0] == '2')
+    return 1;
+  else
+    return 0;
 }
 
 void setupConnection(int* sockfd, std::array<std::string, 7>& argArray) {
@@ -76,11 +80,42 @@ void initMessage(int sockfd, std::array<std::string, 7>& argArray) {
   // related to uploading/ downloading content
 
   char userMessage[BUFFER_SIZE];
-  int userMessageSize =
-      sprintf(userMessage, "USER %s\\r\\n", argArray[1].data());
+  sprintf(userMessage, "USER %s\r\n", argArray[1].c_str());
   std::cout << "Sending Message: \n" << userMessage << "\n";
-  if (send(sockfd, userMessage, userMessageSize, 0) < 0) {
+  if (send(sockfd, userMessage, strlen(userMessage), 0) < 0) {
     std::cerr << "Init Error: Error sending USER message to server\n";
+    close(sockfd);
+    exit(1);
+  }
+
+  sendMessageStatus(sockfd);
+
+  char passwordMessage[BUFFER_SIZE];
+  sprintf(passwordMessage, "PASS %s\r\n", argArray[2].c_str());
+  std::cout << "Sending Message: \n" << passwordMessage << "\n";
+  if (send(sockfd, passwordMessage, strlen(passwordMessage), 0) < 0) {
+    std::cerr << "Init Error: Error sending Password message to server\n";
+    close(sockfd);
+    exit(1);
+  }
+
+  sendMessageStatus(sockfd);
+
+  const char* makeDirectoryMessage = "MKD ./new-dir\r\n";
+  std::cout << "Sending Message: \n" << makeDirectoryMessage << "\n";
+  if (send(sockfd, makeDirectoryMessage, strlen(makeDirectoryMessage), 0) < 0) {
+    std::cerr << "Init Error: Error sending LIST message to server\n";
+    close(sockfd);
+    exit(1);
+  }
+
+  sendMessageStatus(sockfd);
+
+  const char* deleteDirectoryMessage = "RMD ./new-dir\r\n";
+  std::cout << "Sending Message: \n" << deleteDirectoryMessage << "\n";
+  if (send(sockfd, deleteDirectoryMessage, strlen(deleteDirectoryMessage), 0) <
+      0) {
+    std::cerr << "Init Error: Error sending RMD message to server\n";
     close(sockfd);
     exit(1);
   }
@@ -118,7 +153,6 @@ void parseInputParameters(int argc, char** argv,
   }
 
   const std::string fullArgument(argv[2] + (sizeof("ftp://") - 1));
-  std::cout << "Argument being parsed: " << fullArgument << "\n";
   size_t usernamePWSplit;
   if ((usernamePWSplit = fullArgument.find("@")) != fullArgument.npos) {
     // Found username and/or password
@@ -175,18 +209,15 @@ int main(int argc, char** argv) {
   }
   // $ ./ftpClient [operation] [param1] [param2]
 
-  // Parse the string to get the username, password, ftp URL + port
-  // file path
-
   int sockfd = -1;
   // command, username, password, ftp hostname, port, firstArg, secondArg
   // only command, hostname and firstArg - everything else is optional
   std::array<std::string, 7> argArray;
   parseInputParameters(argc, argv, argArray);
 
-  for (const std::string& s : argArray) {
-    std::cout << s << "\n";
-  }
+  //   for (const std::string& s : argArray) {
+  //     std::cout << s << "\n";
+  //   }
   setupConnection(&sockfd, argArray);
   initMessage(sockfd, argArray);
 
