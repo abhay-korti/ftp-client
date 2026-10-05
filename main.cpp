@@ -7,6 +7,7 @@
 #include <fstream>
 #include <string.h>
 #include <arpa/inet.h>
+#include <unordered_map>
 
 #define BUFFER_SIZE 4096
 
@@ -195,22 +196,28 @@ void runCommand(int sockfd, std::array<std::string, 7>& argArray) {
   // ------------------------------
   // QUIT\r\n - end of STOR and EOP
   // ------------------------------
+  std::unordered_map<const char*, const char*> commandMap;
+  commandMap["rmdir"] = "RMD";
+  commandMap["rm"] = "DELE";
+  commandMap["mkdir"] = "MKD";
+  commandMap["ls"] = "LIST";
 
   char message[BUFFER_SIZE];
   sprintf(message, "%s %s\r\n", argArray[0].data(), argArray[5].data());
 
-  if ((strcmp("RMD", command) == 0) || (strcmp("MKD", command) == 0) ||
-      (strcmp("DELE", command) == 0)) {
+  if ((strcmp("RMD", commandMap[command]) == 0) ||
+      (strcmp("MKD", commandMap[command]) == 0) ||
+      (strcmp("DELE", commandMap[command]) == 0)) {
     sendMessage(sockfd, message);
     sendMessageStatus(sockfd);
-  } else if ((strcmp(command, "LIST") == 0)) {
+  } else if ((strcmp(commandMap[command], "LIST") == 0)) {
     dataTransferPrep(sockfd);
     int dataChannelfd = dataChannelStart(sockfd);
     sendMessage(sockfd, message);
     sendMessageStatus(sockfd);
     sendMessageStatus(dataChannelfd);
     sendMessageStatus(sockfd);
-  } else if ((strcmp(command, "STOR") == 0)) {
+  } else if ((strcmp(commandMap[command], "STOR") == 0)) {
     dataTransferPrep(sockfd);
     int dataChannelfd = dataChannelStart(sockfd);
     // Send STOR Request
