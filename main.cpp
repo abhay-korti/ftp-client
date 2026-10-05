@@ -177,7 +177,6 @@ int dataChannelStart(int sockfd) {
 }
 
 void runCommand(int sockfd, std::array<std::string, 7>& argArray) {
-  const char* command = argArray[0].c_str();
   // USER <username>\r\n - init
   // PASS<password>\r\n - init
   // TYPE I\r\n - dataChannelSetup
@@ -196,28 +195,28 @@ void runCommand(int sockfd, std::array<std::string, 7>& argArray) {
   // ------------------------------
   // QUIT\r\n - end of STOR and EOP
   // ------------------------------
-  std::unordered_map<const char*, const char*> commandMap;
+  std::unordered_map<std::string, const char*> commandMap;
+  std::cout << argArray[0] << "\n";
   commandMap["rmdir"] = "RMD";
   commandMap["rm"] = "DELE";
   commandMap["mkdir"] = "MKD";
   commandMap["ls"] = "LIST";
-
   char message[BUFFER_SIZE];
-  sprintf(message, "%s %s\r\n", argArray[0].data(), argArray[5].data());
+  sprintf(message, "%s %s\r\n", commandMap[argArray[0]], argArray[5].data());
 
-  if ((strcmp("RMD", commandMap[command]) == 0) ||
-      (strcmp("MKD", commandMap[command]) == 0) ||
-      (strcmp("DELE", commandMap[command]) == 0)) {
+  if ((strcmp("RMD", commandMap[argArray[0]]) == 0) ||
+      (strcmp("MKD", commandMap[argArray[0]]) == 0) ||
+      (strcmp("DELE", commandMap[argArray[0]]) == 0)) {
     sendMessage(sockfd, message);
     sendMessageStatus(sockfd);
-  } else if ((strcmp(commandMap[command], "LIST") == 0)) {
+  } else if ((strcmp(commandMap[argArray[0]], "LIST") == 0)) {
     dataTransferPrep(sockfd);
     int dataChannelfd = dataChannelStart(sockfd);
     sendMessage(sockfd, message);
     sendMessageStatus(sockfd);
     sendMessageStatus(dataChannelfd);
     sendMessageStatus(sockfd);
-  } else if ((strcmp(commandMap[command], "STOR") == 0)) {
+  } else if ((strcmp(commandMap[argArray[0]], "STOR") == 0)) {
     dataTransferPrep(sockfd);
     int dataChannelfd = dataChannelStart(sockfd);
     // Send STOR Request
