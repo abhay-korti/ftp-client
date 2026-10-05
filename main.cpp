@@ -3,15 +3,73 @@
 #include <string>
 #include <netdb.h>
 #include <unistd.h>
+#include <regex>
 #include <string.h>
+#include <arpa/inet.h>
 
 #define BUFFER_SIZE 4096
+
+void sendMessage(int sockfd, char* message) {
+  std::cout << "Sending:\n" << message << "\n";
+  if (send(sockfd, message, strlen(message), 0) < 0) {
+    std::cerr << "Init Error: Error sending " << message
+              << " message to server\n";
+    close(sockfd);
+    exit(1);
+  }
+}
+
+void dataTransferPrep(int sockfd) {
+  char typeMessage[] = "TYPE I\r\n";
+  sendMessage(sockfd, typeMessage);
+  sendMessageStatus(sockfd);
+
+  char modeMessagge[] = "MODE S\r\n";
+  sendMessage(sockfd, modeMessagge);
+  sendMessageStatus(sockfd);
+
+  char structureCodeMessage[] = "STRU F\r\n";
+  sendMessage(sockfd, structureCodeMessage);
+  sendMessageStatus(sockfd);
+}
 
 int sendMessageStatus(int sockfd) {
   char buf[BUFFER_SIZE];
   memset(buf, 0, BUFFER_SIZE);
   ssize_t bufferBytesUsed = 0;
+  while (1) {
+    char* pointer = strstr(buf, "\r\n");
+    if (pointer) break;
+    if (bufferBytesUsed == sizeof(buf)) {
+      std::cerr << "Recv Error: Recv Buffer Full\n";
+      close(sockfd);
+      return -1;
+    }
+    ssize_t n = recv(sockfd, buf + bufferBytesUsed,
+                     sizeof(buf) - bufferBytesUsed - 1, 0);
+    if (n < 0) {
+      std::cerr << "Recv Error: Error Receiving Data\n";
+      close(sockfd);
+      return -1;
+    }
+    if (n == 0) break;
+    bufferBytesUsed += n;
+  }
 
+  std::cout << "Bytes Recevied:\n" << buf << "\n";
+
+  if (buf[0] == '2')
+    return 1;
+  else
+    return 0;
+}
+
+int dataChannelStart(int sockfd) {
+  char pasvMessage[] = "PASV\r\n";
+  sendMessage(sockfd, pasvMessage);
+  char buf[BUFFER_SIZE];
+  memset(buf, 0, BUFFER_SIZE);
+  ssize_t bufferBytesUsed = 0;
   while (1) {
     char* pointer = strstr(buf, "\r\n");
     if (pointer) break;
@@ -32,13 +90,83 @@ int sendMessageStatus(int sockfd) {
   }
 
   buf[bufferBytesUsed] = '\0';
+  std::cout << "Response Received:\n" << buf << "\n";
+  std::string response(buf);
+  std::regex pattern("\\d+,\\d+,\\d+,\\d+,\\d+,\\d+");
+  auto patternBegin =
+      std::sregex_iterator(response.begin(), response.end(), pattern);
+  auto patternEnd = std::sregex_iterator();
+  std::smatch match = *patternBegin;
+  std::stringstream toBeSplit(match.str());
+  std::vector<unsigned int> numbers;
+  std::string token;
+  while (std::getline(toBeSplit, token, ',')) {
+    numbers.push_back(std::stoi(token));
+  }
 
-  std::cout << "Bytes Recevied:\n" << buf << "\n";
+  std::string dataChannelIPAddress = "";
 
-  if (buf[0] == '2')
-    return 1;
-  else
-    return 0;
+  for (int i = 0; i < 4; i++) {
+    dataChannelIPAddress += std::to_string(numbers[i]) + ".";
+  }
+  dataChannelIPAddress.pop_back();
+  const unsigned int dataChannelPortNumber = (numbers[4] << 8) + numbers[5];
+
+  int dataChannelfd;
+  while ((dataChannelfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) continue;
+
+  struct sockaddr_in dataAddress = {0};
+  dataAddress.sin_family = AF_INET;
+  dataAddress.sin_port = htons(dataChannelPortNumber);
+  inet_pton(AF_INET, dataChannelIPAddress.data(), &dataAddress.sin_addr);
+
+  if (connect(dataChannelfd, (struct sockaddr*)&dataAddress,
+              sizeof(dataAddress)) == -1) {
+    std::cerr << "Data Channel Error: Error Establishing a Connection\n";
+    close(dataChannelfd);
+    return -1;
+  }
+
+  return dataChannelfd;
+}
+
+void runCommand(int sockfd, std::array<std::string, 7>& argArray) {
+  const char* command = argArray[0].c_str();
+  // USER <username>\r\n - init
+  // PASS<password>\r\n - init
+  // TYPE I\r\n - dataChannelSetup
+  // MODE S\r\n - dataChannelSetup
+  // STRU F\r\n - dataChannelSetup
+  // ------------------------------
+  // DELE <path-to-file>\r\n -
+  // MKD <path-to-directory>\r\n
+  // RMD <path-to-directory>\r\n
+  // ------------------------------
+  // PASV\r\n - Before Data Transfer
+  // ------------------------------
+  // LIST <path-to-directory>\r\n
+  // STOR <path-to-file>\r\n
+  // RETR <path-to-file>\r\n
+  // ------------------------------
+  // QUIT\r\n - end of STOR and EOP
+  // ------------------------------
+
+  char message[BUFFER_SIZE];
+  sprintf(message, "%s %s\r\n", argArray[0].data(), argArray[5].data());
+
+  if ((strcmp("RMD", command) == 0) || (strcmp("MKD", command) == 0) ||
+      (strcmp("DELE", command) == 0)) {
+    sendMessage(sockfd, message);
+    sendMessageStatus(sockfd);
+  } else if ((strcmp(command, "LIST") == 0)) {
+    int dataChannelfd = dataChannelStart(sockfd);
+    sendMessage(sockfd, message);
+    sendMessageStatus(sockfd);
+    sendMessageStatus(dataChannelfd);
+    sendMessageStatus(sockfd);
+  } else if ((strcmp(command, "STOR") == 0)) {
+    int dataChannelfd = dataChannelStart(sockfd);
+  }
 }
 
 void setupConnection(int* sockfd, std::array<std::string, 7>& argArray) {
@@ -71,81 +199,38 @@ void setupConnection(int* sockfd, std::array<std::string, 7>& argArray) {
 }
 
 void initMessage(int sockfd, std::array<std::string, 7>& argArray) {
-  // Receive Hello message first
-  std::string receviedMessage = "";
+  // Receive the Hello Message
   sendMessageStatus(sockfd);
-
-  // All bytes received
-  // Login, Password, setup type - and mode if the command is
-  // related to uploading/ downloading content
 
   char userMessage[BUFFER_SIZE];
   sprintf(userMessage, "USER %s\r\n", argArray[1].c_str());
-  std::cout << "Sending Message: \n" << userMessage << "\n";
-  if (send(sockfd, userMessage, strlen(userMessage), 0) < 0) {
-    std::cerr << "Init Error: Error sending USER message to server\n";
-    close(sockfd);
-    exit(1);
-  }
-
+  sendMessage(sockfd, userMessage);
   sendMessageStatus(sockfd);
 
   char passwordMessage[BUFFER_SIZE];
   sprintf(passwordMessage, "PASS %s\r\n", argArray[2].c_str());
-  std::cout << "Sending Message: \n" << passwordMessage << "\n";
-  if (send(sockfd, passwordMessage, strlen(passwordMessage), 0) < 0) {
-    std::cerr << "Init Error: Error sending Password message to server\n";
-    close(sockfd);
-    exit(1);
-  }
-
-  sendMessageStatus(sockfd);
-
-  const char* makeDirectoryMessage = "MKD ./new-dir\r\n";
-  std::cout << "Sending Message: \n" << makeDirectoryMessage << "\n";
-  if (send(sockfd, makeDirectoryMessage, strlen(makeDirectoryMessage), 0) < 0) {
-    std::cerr << "Init Error: Error sending LIST message to server\n";
-    close(sockfd);
-    exit(1);
-  }
-
-  sendMessageStatus(sockfd);
-
-  const char* deleteDirectoryMessage = "RMD ./new-dir\r\n";
-  std::cout << "Sending Message: \n" << deleteDirectoryMessage << "\n";
-  if (send(sockfd, deleteDirectoryMessage, strlen(deleteDirectoryMessage), 0) <
-      0) {
-    std::cerr << "Init Error: Error sending RMD message to server\n";
-    close(sockfd);
-    exit(1);
-  }
-
+  sendMessage(sockfd, passwordMessage);
   sendMessageStatus(sockfd);
 }
 
 void parseInputParameters(int argc, char** argv,
                           std::array<std::string, 7>& argArray) {
-  // ftp://ftp.example.com/ - USER = anonymous PORT: 21
-  // ftp://bob:s3cr3t@ftp.example.com/ - port 21
-
-  // Break the string up, cut it at the @
-  // If that string is empty, User and Password are empty
-
   // Default arguments
-  // Command
+
   argArray[0] = argv[1];
-  // Username
+  // Command     ^
   argArray[1] = "anonymous";
-  // Password
+  // Username    ^
   argArray[2] = "";
-  // Host Name
+  // Password    ^
   argArray[3] = "";
-  // Port Number
+  // Hostname    ^
   argArray[4] = "21";
-  // First Arg
+  // Port Number ^
   argArray[5] = "/";
-  // Second Arg
+  // First Arg   ^
   argArray[6] = "";
+  // Second Arg  ^
 
   if (strstr(argv[2], "ftp://") == NULL) {
     std::cerr << "Not a FTP protocol URL\n";
@@ -176,7 +261,10 @@ void parseInputParameters(int argc, char** argv,
     // Hostname Found, look for port number
     const std::string hostnameAndPort = fullArgument.substr(
         usernamePWSplit != fullArgument.npos ? (usernamePWSplit + 1) : 0,
-        hostNameSplit);
+        usernamePWSplit != fullArgument.npos
+            ? hostNameSplit - (usernamePWSplit + 1)
+            : hostNameSplit - 0);
+    std::cout << "Host and Port Number:" << hostnameAndPort << "\n";
     size_t portNumberSplit;
     if ((portNumberSplit = hostnameAndPort.find(":")) != hostnameAndPort.npos) {
       // Port Number found
@@ -184,16 +272,18 @@ void parseInputParameters(int argc, char** argv,
       argArray[3] = hostnameAndPort.substr(0, portNumberSplit);
       // Port Number
       argArray[4] = hostnameAndPort.substr(
-          portNumberSplit + 1,
-          usernamePWSplit != fullArgument.npos
-              ? hostnameAndPort.size() - 2 - portNumberSplit
-              : hostnameAndPort.size() - 1 - portNumberSplit);
+          portNumberSplit + 1, hostnameAndPort.size() - 1 - portNumberSplit
+          // usernamePWSplit != fullArgument.npos
+          //     ? hostnameAndPort.size() - 2 - portNumberSplit
+      );
     } else {
       // No Port Number found
       argArray[3] = hostnameAndPort;
     }
   } else {
-    std::cerr << "Couldn't find hostname while parsing string\n" << "\n";
+    std::cerr << "Couldn't find hostname while parsing string - Missing "
+                 "Starting Directory\n"
+              << "\n";
     exit(1);
   }
 
@@ -210,17 +300,20 @@ int main(int argc, char** argv) {
   // $ ./ftpClient [operation] [param1] [param2]
 
   int sockfd = -1;
-  // command, username, password, ftp hostname, port, firstArg, secondArg
-  // only command, hostname and firstArg - everything else is optional
   std::array<std::string, 7> argArray;
   parseInputParameters(argc, argv, argArray);
 
-  //   for (const std::string& s : argArray) {
-  //     std::cout << s << "\n";
-  //   }
+  for (const std::string& s : argArray) {
+    std::cout << s << "\n";
+  }
+
   setupConnection(&sockfd, argArray);
   initMessage(sockfd, argArray);
+  runCommand(sockfd, argArray);
 
+  char quitMessage[] = "QUIT\r\n";
+  sendMessage(sockfd, quitMessage);
+  sendMessageStatus(sockfd);
   close(sockfd);
   return 0;
 }
