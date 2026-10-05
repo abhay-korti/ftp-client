@@ -201,6 +201,7 @@ void runCommand(int sockfd, std::array<std::string, 7>& argArray) {
   commandMap["rm"] = "DELE";
   commandMap["mkdir"] = "MKD";
   commandMap["ls"] = "LIST";
+  commandMap["cp"] = "STOR";
   char message[BUFFER_SIZE];
   sprintf(message, "%s %s\r\n", commandMap[argArray[0]], argArray[5].data());
 
@@ -284,6 +285,8 @@ void initMessage(int sockfd, std::array<std::string, 7>& argArray) {
 void parseInputParameters(int argc, char** argv,
                           std::array<std::string, 7>& argArray) {
   // Default arguments
+
+  if (strstr(argv[2], "ftp:://") == nullptr) std::swap(argv[2], argv[3]);
 
   argArray[0] = argv[1];
   // Command     ^
