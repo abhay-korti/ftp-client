@@ -4,10 +4,21 @@
 #include <netdb.h>
 #include <unistd.h>
 #include <regex>
+#include <fstream>
 #include <string.h>
 #include <arpa/inet.h>
 
 #define BUFFER_SIZE 4096
+
+void sendMessage(int sockfd, char* message);
+void dataTransferPrep(int sockfd);
+int sendMessageStatus(int sockfd);
+int dataChannelStart(int sockfd);
+void runCommand(int sockfd, std::array<std::string, 7>& argArray);
+void initMessage(int sockfd, std::array<std::string, 7>& argArray);
+void parseInputParameters(int argc, char** argv,
+                          std::array<std::string, 7>& argArray);
+void readAndSendFile(int dataChannelfd, char* filePath);
 
 void sendMessage(int sockfd, char* message) {
   std::cout << "Sending:\n" << message << "\n";
@@ -17,6 +28,40 @@ void sendMessage(int sockfd, char* message) {
     close(sockfd);
     exit(1);
   }
+}
+
+int sendFileChunk(int sockfd, char* message, ssize_t n) {
+  std::cout << "Sending:\n" << message << "\n";
+  if (send(sockfd, message, n, 0) < 0) {
+    std::cerr << "Init Error: Error sending " << message
+              << " message to server\n";
+    close(sockfd);
+    return -1;
+  }
+  return 0;
+}
+
+void readAndSendFile(int dataChannelfd, const char* filePath) {
+  std::fstream uploadFile(filePath, std::ios::in | std::ios::binary);
+  if (!uploadFile.is_open()) {
+    std::cerr << "STOR Error: Failed to open the file\n";
+    exit(1);
+  }
+  char buffer[4 * BUFFER_SIZE];
+  while (uploadFile.read(buffer, sizeof(buffer)) || uploadFile.gcount() > 0) {
+    std::streamsize n = uploadFile.gcount();
+    std::cout << "Bytes Read\n" << n << "\n";
+    if (sendFileChunk(dataChannelfd, buffer, n) != 0) {
+      std::cerr << "STOR Error: Failed to send File Chunk\n";
+      exit(1);
+    }
+  }
+
+  if (uploadFile.bad()) {
+    std::cerr << "STOR Error: Failed process file\n";
+    exit(1);
+  }
+  uploadFile.close();
 }
 
 void dataTransferPrep(int sockfd) {
@@ -159,13 +204,26 @@ void runCommand(int sockfd, std::array<std::string, 7>& argArray) {
     sendMessage(sockfd, message);
     sendMessageStatus(sockfd);
   } else if ((strcmp(command, "LIST") == 0)) {
+    dataTransferPrep(sockfd);
     int dataChannelfd = dataChannelStart(sockfd);
     sendMessage(sockfd, message);
     sendMessageStatus(sockfd);
     sendMessageStatus(dataChannelfd);
     sendMessageStatus(sockfd);
   } else if ((strcmp(command, "STOR") == 0)) {
+    dataTransferPrep(sockfd);
     int dataChannelfd = dataChannelStart(sockfd);
+    // Send STOR Request
+    sendMessage(sockfd, message);
+    // Receive OK to Send
+    sendMessageStatus(sockfd);
+    // Send Data
+    readAndSendFile(dataChannelfd, argArray[6].c_str());
+    // Close the Connection
+    char quitMessage[] = "QUIT\r\n";
+    sendMessage(dataChannelfd, quitMessage);
+    close(dataChannelfd);
+    sendMessageStatus(sockfd);
   }
 }
 
@@ -208,7 +266,11 @@ void initMessage(int sockfd, std::array<std::string, 7>& argArray) {
   sendMessageStatus(sockfd);
 
   char passwordMessage[BUFFER_SIZE];
-  sprintf(passwordMessage, "PASS %s\r\n", argArray[2].c_str());
+  if (argArray[1] != "anonymous") {
+    sprintf(passwordMessage, "PASS %s\r\n", argArray[2].c_str());
+  } else {
+    sprintf(passwordMessage, "PASS\r\n");
+  }
   sendMessage(sockfd, passwordMessage);
   sendMessageStatus(sockfd);
 }
