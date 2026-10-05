@@ -15,10 +15,10 @@ void sendMessage(int sockfd, char* message);
 void dataTransferPrep(int sockfd);
 int sendMessageStatus(int sockfd);
 int dataChannelStart(int sockfd);
-void runCommand(int sockfd, std::array<std::string, 7>& argArray);
-void initMessage(int sockfd, std::array<std::string, 7>& argArray);
+void runCommand(int sockfd, std::array<std::string, 8>& argArray);
+void initMessage(int sockfd, std::array<std::string, 8>& argArray);
 void parseInputParameters(int argc, char** argv,
-                          std::array<std::string, 7>& argArray);
+                          std::array<std::string, 8>& argArray);
 void readAndSendFile(int dataChannelfd, char* filePath);
 
 void sendMessage(int sockfd, char* message) {
@@ -57,7 +57,6 @@ void readAndSendFile(int dataChannelfd, const char* filePath) {
       exit(1);
     }
   }
-
   if (uploadFile.bad()) {
     std::cerr << "STOR Error: Failed process file\n";
     exit(1);
@@ -176,7 +175,7 @@ int dataChannelStart(int sockfd) {
   return dataChannelfd;
 }
 
-void runCommand(int sockfd, std::array<std::string, 7>& argArray) {
+void runCommand(int sockfd, std::array<std::string, 8>& argArray) {
   // USER <username>\r\n - init
   // PASS<password>\r\n - init
   // TYPE I\r\n - dataChannelSetup
@@ -201,7 +200,11 @@ void runCommand(int sockfd, std::array<std::string, 7>& argArray) {
   commandMap["rm"] = "DELE";
   commandMap["mkdir"] = "MKD";
   commandMap["ls"] = "LIST";
-  commandMap["cp"] = "STOR";
+  if (argArray[7] == "STOR")
+    commandMap["cp"] = "STOR";
+  else
+    commandMap["cp"] = "RETR";
+
   char message[BUFFER_SIZE];
   sprintf(message, "%s %s\r\n", commandMap[argArray[0]], argArray[5].data());
 
@@ -228,13 +231,13 @@ void runCommand(int sockfd, std::array<std::string, 7>& argArray) {
     readAndSendFile(dataChannelfd, argArray[6].c_str());
     // Close the Connection
     char quitMessage[] = "QUIT\r\n";
-    sendMessage(dataChannelfd, quitMessage);
+    sendMessage(sockfd, quitMessage);
     close(dataChannelfd);
     sendMessageStatus(sockfd);
   }
 }
 
-void setupConnection(int* sockfd, std::array<std::string, 7>& argArray) {
+void setupConnection(int* sockfd, std::array<std::string, 8>& argArray) {
   struct addrinfo hints, *p, *start;
   int status;
   memset(&hints, 0, sizeof(hints));
@@ -263,7 +266,7 @@ void setupConnection(int* sockfd, std::array<std::string, 7>& argArray) {
   freeaddrinfo(start);
 }
 
-void initMessage(int sockfd, std::array<std::string, 7>& argArray) {
+void initMessage(int sockfd, std::array<std::string, 8>& argArray) {
   // Receive the Hello Message
   sendMessageStatus(sockfd);
 
@@ -283,10 +286,15 @@ void initMessage(int sockfd, std::array<std::string, 7>& argArray) {
 }
 
 void parseInputParameters(int argc, char** argv,
-                          std::array<std::string, 7>& argArray) {
+                          std::array<std::string, 8>& argArray) {
   // Default arguments
 
-  if (strstr(argv[2], "ftp:://") == nullptr) std::swap(argv[2], argv[3]);
+  if (strstr(argv[2], "ftp:://") == nullptr) {
+    argArray[7] = "STOR";
+    std::swap(argv[2], argv[3]);
+  } else {
+    argArray[7] = "RETR";
+  }
 
   argArray[0] = argv[1];
   // Command     ^
@@ -369,9 +377,14 @@ int main(int argc, char** argv) {
     exit(1);
   }
   // $ ./ftpClient [operation] [param1] [param2]
+  std::cout << "Command: ";
+  for (int i = 0; i < argc; i++) {
+    std::cout << argv[i] << " ";
+  }
+  std::cout << "\n";
 
   int sockfd = -1;
-  std::array<std::string, 7> argArray;
+  std::array<std::string, 8> argArray;
   parseInputParameters(argc, argv, argArray);
 
   for (const std::string& s : argArray) {
