@@ -24,7 +24,7 @@ void readAndSendFile(int dataChannelfd, char* filePath);
 void sendMessage(int sockfd, char* message) {
   std::cout << "Sending:\n" << message << "\n";
   if (send(sockfd, message, strlen(message), 0) < 0) {
-    std::cerr << "Init Error: Error sending " << message
+    std::cout << "Init Error: Error sending " << message
               << " message to server\n";
     close(sockfd);
     exit(1);
@@ -34,7 +34,7 @@ void sendMessage(int sockfd, char* message) {
 int sendFileChunk(int sockfd, char* message, ssize_t n) {
   std::cout << "Sending:\n" << message << "\n";
   if (send(sockfd, message, n, 0) < 0) {
-    std::cerr << "Init Error: Error sending " << message
+    std::cout << "Init Error: Error sending " << message
               << " message to server\n";
     close(sockfd);
     return -1;
@@ -45,7 +45,7 @@ int sendFileChunk(int sockfd, char* message, ssize_t n) {
 void readAndSendFile(int dataChannelfd, const char* filePath) {
   std::fstream uploadFile(filePath, std::ios::in | std::ios::binary);
   if (!uploadFile.is_open()) {
-    std::cerr << "STOR Error: Failed to open the file\n";
+    std::cout << "STOR Error: Failed to open the file\n";
     exit(1);
   }
   char buffer[4 * BUFFER_SIZE];
@@ -53,15 +53,40 @@ void readAndSendFile(int dataChannelfd, const char* filePath) {
     std::streamsize n = uploadFile.gcount();
     std::cout << "Bytes Read\n" << n << "\n";
     if (sendFileChunk(dataChannelfd, buffer, n) != 0) {
-      std::cerr << "STOR Error: Failed to send File Chunk\n";
+      std::cout << "STOR Error: Failed to send File Chunk\n";
       exit(1);
     }
   }
   if (uploadFile.bad()) {
-    std::cerr << "STOR Error: Failed process file\n";
+    std::cout << "STOR Error: Failed process file\n";
     exit(1);
   }
   uploadFile.close();
+}
+
+void receiveAndWriteFile(int dataChannelfd, const char* filePath) {
+  std::fstream writeFile(filePath, std::ios::out | std::ios::binary);
+  if (!writeFile.is_open()) {
+    std::cout << "STOR Error: Failed to open the file\n";
+    exit(1);
+  }
+  char buf[4 * BUFFER_SIZE];
+  ssize_t n;
+  while ((n = recv(dataChannelfd, buf, sizeof(buf), 0)) != 0) {
+    if (n < 0) {
+      if (errno == EINTR) {
+        std::cout << "RETR Error: Failed to read any bytes from the socket\n";
+        close(dataChannelfd);
+        exit(1);
+      }
+      writeFile.write(buf, n);
+      if (!writeFile) {
+        std::cout << "RETR Error: Failed to write any bytes to the file\n";
+        close(dataChannelfd);
+        exit(1);
+      }
+    }
+  }
 }
 
 void dataTransferPrep(int sockfd) {
@@ -86,14 +111,14 @@ int sendMessageStatus(int sockfd) {
     char* pointer = strstr(buf, "\r\n");
     if (pointer) break;
     if (bufferBytesUsed == sizeof(buf)) {
-      std::cerr << "Recv Error: Recv Buffer Full\n";
+      std::cout << "Recv Error: Recv Buffer Full\n";
       close(sockfd);
       return -1;
     }
     ssize_t n = recv(sockfd, buf + bufferBytesUsed,
                      sizeof(buf) - bufferBytesUsed - 1, 0);
     if (n < 0) {
-      std::cerr << "Recv Error: Error Receiving Data\n";
+      std::cout << "Recv Error: Error Receiving Data\n";
       close(sockfd);
       return -1;
     }
@@ -119,14 +144,14 @@ int dataChannelStart(int sockfd) {
     char* pointer = strstr(buf, "\r\n");
     if (pointer) break;
     if (bufferBytesUsed == sizeof(buf)) {
-      std::cerr << "Recv Error: Recv Buffer Full\n";
+      std::cout << "Recv Error: Recv Buffer Full\n";
       close(sockfd);
       return -1;
     }
     ssize_t n = recv(sockfd, buf + bufferBytesUsed,
                      sizeof(buf) - bufferBytesUsed - 1, 0);
     if (n < 0) {
-      std::cerr << "Recv Error: Error Receiving Data\n";
+      std::cout << "Recv Error: Error Receiving Data\n";
       close(sockfd);
       return -1;
     }
@@ -167,7 +192,7 @@ int dataChannelStart(int sockfd) {
 
   if (connect(dataChannelfd, (struct sockaddr*)&dataAddress,
               sizeof(dataAddress)) == -1) {
-    std::cerr << "Data Channel Error: Error Establishing a Connection\n";
+    std::cout << "Data Channel Error: Error Establishing a Connection\n";
     close(dataChannelfd);
     return -1;
   }
@@ -176,24 +201,6 @@ int dataChannelStart(int sockfd) {
 }
 
 void runCommand(int sockfd, std::array<std::string, 8>& argArray) {
-  // USER <username>\r\n - init
-  // PASS<password>\r\n - init
-  // TYPE I\r\n - dataChannelSetup
-  // MODE S\r\n - dataChannelSetup
-  // STRU F\r\n - dataChannelSetup
-  // ------------------------------
-  // DELE <path-to-file>\r\n -
-  // MKD <path-to-directory>\r\n
-  // RMD <path-to-directory>\r\n
-  // ------------------------------
-  // PASV\r\n - Before Data Transfer
-  // ------------------------------
-  // LIST <path-to-directory>\r\n
-  // STOR <path-to-file>\r\n
-  // RETR <path-to-file>\r\n
-  // ------------------------------
-  // QUIT\r\n - end of STOR and EOP
-  // ------------------------------
   std::unordered_map<std::string, const char*> commandMap;
   std::cout << argArray[0] << "\n";
   commandMap["rmdir"] = "RMD";
@@ -234,6 +241,19 @@ void runCommand(int sockfd, std::array<std::string, 8>& argArray) {
     sendMessage(sockfd, quitMessage);
     close(dataChannelfd);
     sendMessageStatus(sockfd);
+  } else if ((strcmp(commandMap[argArray[0]], "RETR") == 0)) {
+    dataTransferPrep(sockfd);
+    int dataChannelfd = dataChannelStart(sockfd);
+    sendMessage(sockfd, message);
+    sendMessageStatus(sockfd);
+    receiveAndWriteFile(dataChannelfd, argArray[6].c_str());
+    char quitMessage[] = "QUIT\r\n";
+    sendMessage(sockfd, quitMessage);
+    close(dataChannelfd);
+    sendMessageStatus(sockfd);
+  } else {
+    std::cout << "Command Not Recognized\n";
+    exit(1);
   }
 }
 
@@ -245,7 +265,7 @@ void setupConnection(int* sockfd, std::array<std::string, 8>& argArray) {
   hints.ai_protocol = AF_UNSPEC;
   if ((status = getaddrinfo(argArray[3].c_str(), argArray[4].c_str(), &hints,
                             &start)) != 0) {
-    std::cerr << "Encountered an error trying to establish connection\n";
+    std::cout << "Encountered an error trying to establish connection\n";
     exit(1);
   }
 
@@ -259,7 +279,7 @@ void setupConnection(int* sockfd, std::array<std::string, 8>& argArray) {
   }
 
   if (p == NULL) {
-    std::cerr << "None of the attempts made resulted in a valid connection\n";
+    std::cout << "None of the attempts made resulted in a valid connection\n";
     freeaddrinfo(start);
     exit(1);
   }
@@ -288,8 +308,9 @@ void initMessage(int sockfd, std::array<std::string, 8>& argArray) {
 void parseInputParameters(int argc, char** argv,
                           std::array<std::string, 8>& argArray) {
   // Default arguments
-
-  if (strstr(argv[2], "ftp:://") == nullptr) {
+  char* pointer = strstr(argv[2], "ftp://");
+  if (!pointer) {
+    std::cout << "Swapping the argv\n";
     argArray[7] = "STOR";
     std::swap(argv[2], argv[3]);
   } else {
@@ -311,12 +332,8 @@ void parseInputParameters(int argc, char** argv,
   argArray[6] = "";
   // Second Arg  ^
 
-  if (strstr(argv[2], "ftp://") == NULL) {
-    std::cerr << "Not a FTP protocol URL\n";
-    exit(1);
-  }
-
   const std::string fullArgument(argv[2] + (sizeof("ftp://") - 1));
+  std::cout << "Full Argument: " << fullArgument << "\n";
   size_t usernamePWSplit;
   if ((usernamePWSplit = fullArgument.find("@")) != fullArgument.npos) {
     // Found username and/or password
@@ -351,18 +368,14 @@ void parseInputParameters(int argc, char** argv,
       argArray[3] = hostnameAndPort.substr(0, portNumberSplit);
       // Port Number
       argArray[4] = hostnameAndPort.substr(
-          portNumberSplit + 1, hostnameAndPort.size() - 1 - portNumberSplit
-          // usernamePWSplit != fullArgument.npos
-          //     ? hostnameAndPort.size() - 2 - portNumberSplit
-      );
+          portNumberSplit + 1, hostnameAndPort.size() - 1 - portNumberSplit);
     } else {
       // No Port Number found
       argArray[3] = hostnameAndPort;
     }
   } else {
-    std::cerr << "Couldn't find hostname while parsing string - Missing "
-                 "Starting Directory\n"
-              << "\n";
+    std::cout << "Couldn't find hostname while parsing string - Missing "
+                 "Starting Directory\n";
     exit(1);
   }
 
@@ -372,8 +385,8 @@ void parseInputParameters(int argc, char** argv,
 }
 
 int main(int argc, char** argv) {
-  if (argc < 3) {
-    std::cerr << "Expected 3 Arguments with program call \n";
+  if (argc < 2) {
+    std::cout << "Expected 3 Arguments with program call \n";
     exit(1);
   }
   // $ ./ftpClient [operation] [param1] [param2]
