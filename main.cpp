@@ -67,7 +67,7 @@ void readAndSendFile(int dataChannelfd, const char* filePath) {
 void receiveAndWriteFile(int dataChannelfd, const char* filePath) {
   std::fstream writeFile(filePath, std::ios::out | std::ios::binary);
   if (!writeFile.is_open()) {
-    std::cout << "STOR Error: Failed to open the file\n";
+    std::cout << "RETR Error: Failed to open the file\n";
     exit(1);
   }
   char buf[4 * BUFFER_SIZE];
@@ -87,6 +87,7 @@ void receiveAndWriteFile(int dataChannelfd, const char* filePath) {
       }
     }
   }
+  writeFile.close();
 }
 
 void dataTransferPrep(int sockfd) {
