@@ -65,7 +65,7 @@ void readAndSendFile(int dataChannelfd, const char* filePath) {
 }
 
 void receiveAndWriteFile(int dataChannelfd, const char* filePath) {
-  std::fstream writeFile(filePath, std::ios::out | std::ios::binary);
+  std::ofstream writeFile(filePath, std::ios::binary | std::ios::trunc);
   if (!writeFile.is_open()) {
     std::cout << "RETR Error: Failed to open the file\n";
     exit(1);
@@ -74,20 +74,20 @@ void receiveAndWriteFile(int dataChannelfd, const char* filePath) {
   ssize_t n;
   while ((n = recv(dataChannelfd, buf, sizeof(buf), 0)) != 0) {
     if (n < 0) {
-      if (errno == EINTR) {
-        std::cout << "RETR Error: Failed to read any bytes from the socket\n";
-        close(dataChannelfd);
-        exit(1);
-      }
-      writeFile.write(buf, n);
-      if (!writeFile) {
-        std::cout << "RETR Error: Failed to write any bytes to the file\n";
-        close(dataChannelfd);
-        exit(1);
-      }
+      if (errno == EINTR) continue;
+      perror("RETR Error: recv failed");
+      close(dataChannelfd);
+      exit(1);
+    }
+    writeFile.write(buf, n);
+    if (!writeFile) {
+      std::cout << "RETR Error: Failed to write to the file\n";
+      close(dataChannelfd);
+      exit(1);
     }
   }
   writeFile.close();
+  close(dataChannelfd);
 }
 
 void dataTransferPrep(int sockfd) {
@@ -248,10 +248,11 @@ void runCommand(int sockfd, std::array<std::string, 8>& argArray) {
     sendMessage(sockfd, message);
     sendMessageStatus(sockfd);
     receiveAndWriteFile(dataChannelfd, argArray[6].c_str());
+    sendMessageStatus(sockfd);
     char quitMessage[] = "QUIT\r\n";
     sendMessage(sockfd, quitMessage);
-    close(dataChannelfd);
     sendMessageStatus(sockfd);
+    close(dataChannelfd);
   } else {
     std::cout << "Command Not Recognized\n";
     exit(1);
