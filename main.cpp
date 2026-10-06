@@ -305,7 +305,6 @@ void parseInputParameters(int argc, char** argv,
   // Default arguments
   char* pointer = strstr(argv[2], "ftp://");
   if (!pointer) {
-    std::cout << "Swapping the argv\n";
     argArray[7] = "STOR";
     std::swap(argv[2], argv[3]);
   } else {
