@@ -22,7 +22,6 @@ void parseInputParameters(int argc, char** argv,
 void readAndSendFile(int dataChannelfd, char* filePath);
 
 void sendMessage(int sockfd, char* message) {
-  std::cout << "Sending:\n" << message << "\n";
   if (send(sockfd, message, strlen(message), 0) < 0) {
     std::cout << "Init Error: Error sending " << message
               << " message to server\n";
@@ -32,7 +31,6 @@ void sendMessage(int sockfd, char* message) {
 }
 
 int sendFileChunk(int sockfd, char* message, ssize_t n) {
-  std::cout << "Sending:\n" << message << "\n";
   if (send(sockfd, message, n, 0) < 0) {
     std::cout << "Init Error: Error sending " << message
               << " message to server\n";
@@ -51,7 +49,6 @@ void readAndSendFile(int dataChannelfd, const char* filePath) {
   char buffer[4 * BUFFER_SIZE];
   while (uploadFile.read(buffer, sizeof(buffer)) || uploadFile.gcount() > 0) {
     std::streamsize n = uploadFile.gcount();
-    std::cout << "Bytes Read\n" << n << "\n";
     if (sendFileChunk(dataChannelfd, buffer, n) != 0) {
       std::cout << "STOR Error: Failed to send File Chunk\n";
       exit(1);
@@ -127,8 +124,6 @@ int sendMessageStatus(int sockfd) {
     bufferBytesUsed += n;
   }
 
-  std::cout << "Bytes Recevied:\n" << buf << "\n";
-
   if (buf[0] == '2')
     return 1;
   else
@@ -161,7 +156,6 @@ int dataChannelStart(int sockfd) {
   }
 
   buf[bufferBytesUsed] = '\0';
-  std::cout << "Response Received:\n" << buf << "\n";
   std::string response(buf);
   std::regex pattern("\\d+,\\d+,\\d+,\\d+,\\d+,\\d+");
   auto patternBegin =
@@ -203,7 +197,6 @@ int dataChannelStart(int sockfd) {
 
 void runCommand(int sockfd, std::array<std::string, 8>& argArray) {
   std::unordered_map<std::string, const char*> commandMap;
-  std::cout << argArray[0] << "\n";
   commandMap["rmdir"] = "RMD";
   commandMap["rm"] = "DELE";
   commandMap["mkdir"] = "MKD";
@@ -335,7 +328,6 @@ void parseInputParameters(int argc, char** argv,
   // Second Arg  ^
 
   const std::string fullArgument(argv[2] + (sizeof("ftp://") - 1));
-  std::cout << "Full Argument: " << fullArgument << "\n";
   size_t usernamePWSplit;
   if ((usernamePWSplit = fullArgument.find("@")) != fullArgument.npos) {
     // Found username and/or password
@@ -362,7 +354,6 @@ void parseInputParameters(int argc, char** argv,
         usernamePWSplit != fullArgument.npos
             ? hostNameSplit - (usernamePWSplit + 1)
             : hostNameSplit - 0);
-    std::cout << "Host and Port Number:" << hostnameAndPort << "\n";
     size_t portNumberSplit;
     if ((portNumberSplit = hostnameAndPort.find(":")) != hostnameAndPort.npos) {
       // Port Number found
@@ -392,19 +383,10 @@ int main(int argc, char** argv) {
     exit(1);
   }
   // $ ./ftpClient [operation] [param1] [param2]
-  std::cout << "Command: ";
-  for (int i = 0; i < argc; i++) {
-    std::cout << argv[i] << " ";
-  }
-  std::cout << "\n";
 
   int sockfd = -1;
   std::array<std::string, 8> argArray;
   parseInputParameters(argc, argv, argArray);
-
-  for (const std::string& s : argArray) {
-    std::cout << s << "\n";
-  }
 
   setupConnection(&sockfd, argArray);
   initMessage(sockfd, argArray);
